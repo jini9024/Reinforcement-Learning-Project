@@ -120,7 +120,7 @@ def select_action(state, epsilon, model, device):
 
 def train_double_dqn(episodes, epsilon=1.0, gamma=0.95, lr=0.001, 
                      batch_size=64, target_update=10, replay_size=10000,
-                     min_replay_size=1000):
+                     min_replay_size=500):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     # Initialize networks for robot
@@ -167,6 +167,28 @@ def train_double_dqn(episodes, epsilon=1.0, gamma=0.95, lr=0.001,
             if (row, col) == (0, 5):
                 reached_goal = True
                 break
+            
+            # Train robot network every 4 steps
+            if len(robot_replay) >= min_replay_size and step % 4 == 0:
+                states, actions, rewards, next_states, dones = robot_replay.sample(batch_size)
+                states = states.to(device)
+                actions = actions.to(device)
+                rewards = rewards.to(device)
+                next_states = next_states.to(device)
+                dones = dones.to(device)
+                
+                # Double DQN: use main network for action selection, target for Q-value
+                with torch.no_grad():
+                    next_actions = robot_main(next_states).argmax(1)
+                    next_q_values = robot_target(next_states).gather(1, next_actions.unsqueeze(1))
+                    target_q = rewards + (1 - dones) * gamma * next_q_values.squeeze()
+                
+                current_q = robot_main(states).gather(1, actions.unsqueeze(1)).squeeze()
+                loss = F.mse_loss(current_q, target_q)
+                
+                robot_optimizer.zero_grad()
+                loss.backward()
+                robot_optimizer.step()
         
         # Human training episode
         row, col = random_start()
@@ -191,50 +213,28 @@ def train_double_dqn(episodes, epsilon=1.0, gamma=0.95, lr=0.001,
             if (row, col) == (0, 5):
                 reached_goal = True
                 break
-        
-        # Train robot network
-        if len(robot_replay) >= min_replay_size:
-            states, actions, rewards, next_states, dones = robot_replay.sample(batch_size)
-            states = states.to(device)
-            actions = actions.to(device)
-            rewards = rewards.to(device)
-            next_states = next_states.to(device)
-            dones = dones.to(device)
             
-            # Double DQN: use main network for action selection, target for Q-value
-            with torch.no_grad():
-                next_actions = robot_main(next_states).argmax(1)
-                next_q_values = robot_target(next_states).gather(1, next_actions.unsqueeze(1))
-                target_q = rewards + (1 - dones) * gamma * next_q_values.squeeze()
-            
-            current_q = robot_main(states).gather(1, actions.unsqueeze(1)).squeeze()
-            loss = F.mse_loss(current_q, target_q)
-            
-            robot_optimizer.zero_grad()
-            loss.backward()
-            robot_optimizer.step()
-        
-        # Train human network
-        if len(human_replay) >= min_replay_size:
-            states, actions, rewards, next_states, dones = human_replay.sample(batch_size)
-            states = states.to(device)
-            actions = actions.to(device)
-            rewards = rewards.to(device)
-            next_states = next_states.to(device)
-            dones = dones.to(device)
-            
-            # Double DQN: use main network for action selection, target for Q-value
-            with torch.no_grad():
-                next_actions = human_main(next_states).argmax(1)
-                next_q_values = human_target(next_states).gather(1, next_actions.unsqueeze(1))
-                target_q = rewards + (1 - dones) * gamma * next_q_values.squeeze()
-            
-            current_q = human_main(states).gather(1, actions.unsqueeze(1)).squeeze()
-            loss = F.mse_loss(current_q, target_q)
-            
-            human_optimizer.zero_grad()
-            loss.backward()
-            human_optimizer.step()
+            # Train human network every 4 steps
+            if len(human_replay) >= min_replay_size and step % 4 == 0:
+                states, actions, rewards, next_states, dones = human_replay.sample(batch_size)
+                states = states.to(device)
+                actions = actions.to(device)
+                rewards = rewards.to(device)
+                next_states = next_states.to(device)
+                dones = dones.to(device)
+                
+                # Double DQN: use main network for action selection, target for Q-value
+                with torch.no_grad():
+                    next_actions = human_main(next_states).argmax(1)
+                    next_q_values = human_target(next_states).gather(1, next_actions.unsqueeze(1))
+                    target_q = rewards + (1 - dones) * gamma * next_q_values.squeeze()
+                
+                current_q = human_main(states).gather(1, actions.unsqueeze(1)).squeeze()
+                loss = F.mse_loss(current_q, target_q)
+                
+                human_optimizer.zero_grad()
+                loss.backward()
+                human_optimizer.step()
         
         # Update target networks periodically
         if ep % target_update == 0:
